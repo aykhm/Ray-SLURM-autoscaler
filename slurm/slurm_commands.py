@@ -123,11 +123,17 @@ def slurm_get_job_ip(job_id: str) -> str:
     if len(output) != 2:
         return None
 
+    node_name = output[1].split()[-2]
+
+    import socket
+    return socket.gethostbyname(node_name)
+'''
     node_name = output[1].split()[SLURM_INFO_NODE_IDX]
     if node_name in SLURM_IP_LOOKUP:
         return SLURM_IP_LOOKUP[node_name]
     else:
         return None
+'''
 
 def slurm_get_job_status(job_id: str) -> str:
     '''Return the job status given the job id

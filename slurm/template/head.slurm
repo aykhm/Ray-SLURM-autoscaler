@@ -1,7 +1,6 @@
 #!/bin/bash -l
 
 #SBATCH --cpus-per-task=[_DEPLOY_HEAD_CPUS_]
-#SBATCH --gpus-per-task=[_DEPLOY_HEAD_GPUS_]
 
 #SBATCH --nodes=1
 #SBATCH --exclusive
@@ -34,7 +33,7 @@ srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray stop
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$port --dashboard-port=$dashboad_port\
-    --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus "${SLURM_GPUS_PER_TASK}" \
+    --num-cpus "${SLURM_CPUS_PER_TASK}" \
     --ray-client-server-port "$ray_client_port" --autoscaling-config=~/ray_bootstrap_config.yaml \
     --redis-password="$password" --block &
 # __doc_head_ray_end__
