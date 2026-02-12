@@ -338,40 +338,8 @@ class SlurmClusterState:
                     f.write(json.dumps(cluster_state))
 
 
-class NodeProvider:
-    """Interface for getting and returning nodes from a Cloud.
-
-    **Important**: This is an INTERNAL API that is only exposed for the purpose
-    of implementing custom node providers. It is not allowed to call into
-    NodeProvider methods from any Ray package outside the autoscaler, only to
-    define new implementations of NodeProvider for use with the "external" node
-    provider option.
-
-    Args:
-        provider_config: The "provider" section of the autoscaler config yaml
-        cluster_name: The "cluster_name" section of the autoscaler config yaml
-
-    *** About Slurm node_provider: ***
-
-    The nodes are distinguished in three different ways:
-        node id: the slurm batch submission id for the node
-        node name: the node name under slurm
-        node ip: the local node ip
-
-    Design hack:
-    The "run setup command after a node is created" doesn't fit the slurm model. 
-    As a result, all the setup are done at create_node() (inside the slurm script), 
-    and a empty command runner is used. 
-    For copying (rsync), since all the nodes share a file system, the file mounting is 
-    not needed. The only place needed 
-
-    The following things are stored in the temperory folder:
-        1. The cluster states storage file
-        2. The file lock for cluster states storage file
-        3. Modified (from template) Slurm/Bash scripts for launching specific nodes
-
-
-    """
+class SlurmNodeProvider:
+    """NodeProvider implementation backed by Slurm jobs."""
 
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str) -> None:
         """Init the node provider class.
@@ -558,7 +526,7 @@ class NodeProvider:
                 
                 # Wait until the head node is up
                 cli_logger.warning("Waiting for the head to start...This can be block due to resource limit")
-                cli_logger.warning("If you force quit here, please run 'ray down <cluster_config>.ymal afterward to clean up")
+                cli_logger.warning("If you force quit here, please run 'ray down <cluster_config>.yaml afterward to clean up")
                 
                 while slurm_get_job_status(node_id) != SLURM_JOB_RUNNING:
                     time.sleep(WAIT_HEAD_INTEVAL)
@@ -592,6 +560,8 @@ class NodeProvider:
                 for i in range(len(ray_ports)):
                     if not _test_free_port(head_ip, int(ray_ports[i])):
                         cli_logger.warning("Port %s is not free. Replaced." % ray_ports[i])
+                        import sys
+                        sys.exit(1)
                         replace_index.append(i)
 
                 free_ports = _get_free_ports_range(head_ip, PORT_LOWER_BOUND, PORT_HIGHER_BOUND, len(replace_index))
@@ -787,7 +757,7 @@ class NodeProvider:
         mapping from deleted node ids to node metadata.
         """
         for node_id in node_ids:
-            logger.info("NodeProvider: {}: Terminating node".format(node_id))
+            logger.info("SlurmNodeProvider: {}: Terminating node".format(node_id))
             self.terminate_node(node_id)
         return None
 

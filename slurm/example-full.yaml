@@ -4,7 +4,7 @@ cluster_name: slurm-cluster
 # The maximum number of workers nodes to launch in addition to the head
 # node.
 min_workers: 0
-max_workers: 4
+max_workers: 3
 
 # The autoscaler will scale up the cluster faster with higher upscaling speed.
 # E.g., if the task requires adding more nodes then autoscaler will gradually
@@ -15,45 +15,51 @@ upscaling_speed: 1.0
 # If a node is idle for this many minutes, it will be removed.
 idle_timeout_minutes: 1
 
+auth:
+    ssh_user: ec2-user # Use for aws nodes
+
 provider:
   type: external
-  module: ray.autoscaler._private.slurm.node_provider.NodeProvider
-  temp_folder_name: [_DEPLOY_RAY_PATH_]/autoscaler/slurm/temp_script/ # Need to be absolute path
-  template_path: [_DEPLOY_RAY_TEMPLATE_PATH_] # Need to be absolute path
-  gcs_port: "6379" # will be replaced if the port is busy
-  ray_client_port: "10001" # will be replaced if the port is busy
-  dashboad_port : "8265" # will be replaced if the port is busy
+  module: ray.autoscaler._private.slurm.hybrid_node_provider.HybridNodeProvider
+
+  slurm:
+    temp_folder_name: [_DEPLOY_RAY_PATH_]/autoscaler/slurm/temp_script/ # Need to be absolute path
+    template_path: [_DEPLOY_RAY_TEMPLATE_PATH_] # Need to be absolute path
+    gcs_port: "6379" # will be replaced if the port is busy
+    ray_client_port: "10001" # will be replaced if the port is busy
+    dashboad_port : "8265" # will be replaced if the port is busy
+
+  aws:
+    region: us-east-2
+    availability_zone: us-east-2a
+    cache_stopped_nodes: False
+    use_internal_ips: False # by default autoscaler tries to connect to ec2 nodes using internal ip
 
 # Specify the type for the ray head node (as configured below).
-head_node_type: head_node
+head_node_type: head
 
 # Specify the allowed pod types for this ray cluster and the resources they provide.
 available_node_types:
-  head_node:
+  head:
     max_workers: 0 # do not modify
     resources: {"CPU": [_DEPLOY_HEAD_CPUS_], "GPU": [_DEPLOY_HEAD_GPUS_]} # will be used by autoscaler scheduler
     node_config:
       head_node: 1 # needed by my create node. Do not modify 
-      under_slurm: 1 # whether the head node should be started under slurm
+      # under_slurm: 1
 
-      # This fields will be filled automatically if not specified
-      # head_ip: "127.0.0.1" # only useful when launching head outside slurm
+      # init_commands:
+      #   - conda activate ray_env # TODO:
 
-      init_commands:
-        - conda activate ray_env # TODO:
-      additional_slurm_commands: 
-        - "#SBATCH --account=bcbb-delta-cpu"
-        - "#SBATCH --partition=cpu"
-        # - "#SBATCH -w node1"
+      # additional_slurm_commands: 
+      #   - "#SBATCH --account=bcbb-delta-cpu"
+      #   - "#SBATCH --partition=cpu"
   
-  worker_node:
-    # Minimum number of Ray workers of this type.
+  slurm_worker:
     min_workers: 0
-    # Maximum number of Ray workers of this type. Takes precedence over min_workers.
-    max_workers: 4
-
-    resources: {"CPU": [_DEPLOY_WORKER_CPUS_], "GPU": [_DEPLOY_WORKER_GPUS_]} # will be used by autoscaler scheduler
-    node_config: 
+    max_workers: 0
+    resources: {"CPU": [_DEPLOY_WORKER_CPUS_], "GPU": [_DEPLOY_WORKER_GPUS_]}
+    node_config:
+      provider: slurm
       head_node: 0 # needed by my create node. Do not modify 
       under_slurm: 1 # doesn't matter. Worker node has to under slurm
       init_commands:
@@ -61,7 +67,18 @@ available_node_types:
       additional_slurm_commands: 
         - "#SBATCH --account=bcbb-delta-cpu"
         - "#SBATCH --partition=cpu"
-  
+
+  aws_worker:
+    min_workers: 0
+    max_workers: 1
+    resources: {"CPU": 2, "GPU": 0}
+    node_config:
+      provider: aws
+      # Standard Ray AWS node config fields:
+      InstanceType: t3.small
+      ImageId: ami-0a5e53664573155b1 # Amazon linux with python3.9.23, ray2.49.1 installed, ssh tunneling enabled
+      InstanceMarketOptions:
+        MarketType: spot
 
 # Do not modify the fields below!
 

@@ -12,4 +12,8 @@ cpus="[_DEPLOY_HEAD_CPUS_]"
 
 ray start --head --node-ip-address="$head_node_ip" --port=$port --dashboard-port=$dashboad_port \
     --num-cpus "$cpus" --ray-client-server-port "$ray_client_port" \
+    --node-manager-port=7000 --object-manager-port=7001 --runtime-env-agent-port=7002 \
+    --min-worker-port=10002 --max-worker-port=10100 \
     --autoscaling-config=~/ray_bootstrap_config.yaml --redis-password="$password"
+
+# TODO: hardcoded port numbers
