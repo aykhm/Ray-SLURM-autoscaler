@@ -10,7 +10,8 @@ import os
 
 # The absolute path of Ray library
 # RAY_PATH = "/Users/<user_name>/opt/anaconda3/envs/<env_name>/lib/python3.9/site-packages/ray"
-RAY_PATH = "/u/amin1/.conda/envs/ray_env/lib/python3.9/site-packages/ray"
+# RAY_PATH = "/u/amin1/.conda/envs/ray_env/lib/python3.9/site-packages/ray"
+RAY_PATH = "/home/aykhm/.pyenv/versions/3.9.23/lib/python3.9/site-packages/ray"
 
 # The compute node name to IP mapping
 SLURM_IP_LOOKUP = """ {
@@ -18,7 +19,7 @@ SLURM_IP_LOOKUP = """ {
 
 MAX_SLURM_JOB_TIME = "01:30:00"
 
-HEAD_NODE_CPUS = "16"
+HEAD_NODE_CPUS = "2"
 HEAD_NODE_GPUS = "0"
 WORKER_NODE_CPUS = "16"
 WORKER_NODE_GPUS = "0"
@@ -51,8 +52,10 @@ if __name__ == "__main__":
     # Copy the files that don't need to be modified
     subprocess.run([
         "cp", 
+        "slurm/aws_node_provider.py",
         "slurm/empty_command_runner.py",
-        "slurm/node_provider.py",
+        "slurm/hybrid_node_provider.py",
+        "slurm/slurm_node_provider.py",
         "slurm/slurm_commands.py",
         RAY_SLURM_PATH
     ])
