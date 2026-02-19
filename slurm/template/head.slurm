@@ -1,6 +1,9 @@
 #!/bin/bash -l
 
+# TODO: mem 0 ?
+
 #SBATCH --cpus-per-task=[_DEPLOY_HEAD_CPUS_]
+#SBATCH --mem=0
 
 #SBATCH --nodes=1
 #SBATCH --exclusive
@@ -35,6 +38,8 @@ srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$port --dashboard-port=$dashboad_port\
     --num-cpus "${SLURM_CPUS_PER_TASK}" \
     --ray-client-server-port "$ray_client_port" --autoscaling-config=~/ray_bootstrap_config.yaml \
+    --node-manager-port=7000 --object-manager-port=7001 --runtime-env-agent-port=7002 \
+    --min-worker-port=10002 --max-worker-port=10100 \
     --redis-password="$password" --block &
 # __doc_head_ray_end__
 
