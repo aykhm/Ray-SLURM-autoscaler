@@ -70,13 +70,13 @@ available_node_types:
 
   aws_worker:
     min_workers: 0
-    max_workers: 2
+    max_workers: 3
     resources: {"CPU": 2, "GPU": 0}
     node_config:
       provider: aws
       # Standard Ray AWS node config fields:
       InstanceType: t3.small
-      ImageId: ami-0a5e53664573155b1 # Amazon linux with python3.9.23, ray2.49.1 installed, ssh tunneling enabled
+      ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
       InstanceMarketOptions:
         MarketType: spot
 
