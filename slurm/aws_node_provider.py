@@ -62,64 +62,58 @@ class AwsNodeProvider:
     def create_node(
         self, node_config: Dict[str, Any], tags: Dict[str, str], count: int
     ) -> Optional[Dict[str, Any]]:
-        assert count == 1 # TODO
-
-        print("create_node")
         res = self._delegate.create_node(node_config, tags, count)
-        print("create_node done")
 
         meta_info = self.slurm_cluster_state.get_meta_info()
-        node_id = list(res.keys())[0]
-        assert node_id is not None
 
         # TODO below steps block autoscaler
-
-        print("Waiting for node init")
-        while not self.is_running(node_id):
-            time.sleep(10)
-        print("Node is running")
-        node_ip = self.external_ip(node_id)
-        assert node_ip is not None
-
-        while True:
-            ports = [6379, 10001, 7000, 7001, 7002]
-            ports.extend(range(10002, 10100)) # TODO hacky, should be configurable
-
-            tunnel_cmd = [
-                "ssh",
-                "-i", os.path.expanduser("~/ray_bootstrap_key.pem"),
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=10",
-                "-o", "ExitOnForwardFailure=yes",
-                "-o", "ServerAliveInterval=5",
-                "-o", "ServerAliveCountMax=3",
-                "-f",
-                "-N",
-            ]
-
-            for port in ports:
-                tunnel_cmd.append("-R")
-                tunnel_cmd.append(f"{port}:localhost:{port}")
-
-            tunnel_cmd.append(f"ec2-user@{node_ip}")
-
-            try:
-                print("Run SSH tunneling command\n")
-                subprocess.run(tunnel_cmd, check=True)
-                print("SSH tunnel setup\n")
-                break
-            except subprocess.CalledProcessError as e:
-                logger.warning("SSH tunneling command failed: " + str(e))
+        for node_id in res.keys():
+            print(f"Waiting for node {node_id} init")
+            while not self.is_running(node_id):
                 time.sleep(10)
+            print(f"Node {node_id} is running")
+            node_ip = self.external_ip(node_id)
+            assert node_ip is not None
 
-        ray_start_command = "ray start"
-        ray_start_command += " --address=\"localhost:6379\""
-        ray_start_command += " --node-ip-address=\"" + node_ip + "\""
-        ray_start_command += " --redis-password=\"" + meta_info["redis_password"] + "\""
+            while True:
+                ports = [6379, 10001, 7000, 7001, 7002]
+                ports.extend(range(10002, 10100)) # TODO hacky, should be configurable
 
-        logger.info(f"Run init command ({ray_start_command})\n")
-        # TODO fix auth config
-        self.get_command_runner("AwsNodeProvider create:", node_id, {"ssh_user": "ec2-user"}, self.cluster_name, subprocess, False).run(ray_start_command)
+                tunnel_cmd = [
+                    "ssh",
+                    "-i", os.path.expanduser("~/ray_bootstrap_key.pem"),
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "ExitOnForwardFailure=yes",
+                    "-o", "ServerAliveInterval=5",
+                    "-o", "ServerAliveCountMax=3",
+                    "-f",
+                    "-N",
+                ]
+
+                for port in ports:
+                    tunnel_cmd.append("-R")
+                    tunnel_cmd.append(f"{port}:localhost:{port}")
+
+                tunnel_cmd.append(f"ec2-user@{node_ip}")
+
+                try:
+                    print(f"Run SSH tunneling command for {node_id}\n")
+                    subprocess.run(tunnel_cmd, check=True)
+                    print(f"SSH tunnel setup for {node_id}\n")
+                    break
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"SSH tunneling command failed for {node_id}: " + str(e))
+                    time.sleep(10)
+
+            ray_start_command = "ray start"
+            ray_start_command += " --address=\"localhost:6379\""
+            ray_start_command += " --node-ip-address=\"" + node_ip + "\""
+            ray_start_command += " --redis-password=\"" + meta_info["redis_password"] + "\""
+
+            logger.info(f"Run init command ({ray_start_command})\n")
+            # TODO fix auth config
+            self.get_command_runner("AwsNodeProvider create:", node_id, {"ssh_user": "ec2-user", "ssh_private_key": "~/ray_bootstrap_key.pem"}, self.cluster_name, subprocess, False).run(ray_start_command)
 
         prefixed_res = {}
         for raw_id, instance in res.items():

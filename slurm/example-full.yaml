@@ -70,7 +70,7 @@ available_node_types:
 
   aws_worker:
     min_workers: 0
-    max_workers: 1
+    max_workers: 2
     resources: {"CPU": 2, "GPU": 0}
     node_config:
       provider: aws
