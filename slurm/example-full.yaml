@@ -25,9 +25,9 @@ provider:
   slurm:
     temp_folder_name: [_DEPLOY_RAY_PATH_]/autoscaler/slurm/temp_script/ # Need to be absolute path
     template_path: [_DEPLOY_RAY_TEMPLATE_PATH_] # Need to be absolute path
-    gcs_port: "6379" # will be replaced if the port is busy
-    ray_client_port: "10001" # will be replaced if the port is busy
-    dashboad_port : "8265" # will be replaced if the port is busy
+    gcs_port: "6379"
+    ray_client_port: "10001"
+    dashboad_port : "8265"
 
   aws:
     region: us-east-2
@@ -44,6 +44,7 @@ available_node_types:
     max_workers: 0 # do not modify
     resources: {"CPU": [_DEPLOY_HEAD_CPUS_], "GPU": [_DEPLOY_HEAD_GPUS_]} # will be used by autoscaler scheduler
     node_config:
+      provider: slurm
       head_node: 1 # needed by my create node. Do not modify 
       # under_slurm: 1
 

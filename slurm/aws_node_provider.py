@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 fix_config_keys = ["region", "aws_credentials", "use_internal_ips"]
 AWS_PREFIX = "aws:" # TODO
+AWS_USER = "ec2-user" # TODO
 
 # TODO hacky
 def fix_config_provider(config: Dict[str, Any]):
@@ -95,7 +96,7 @@ class AwsNodeProvider:
                     tunnel_cmd.append("-R")
                     tunnel_cmd.append(f"{port}:localhost:{port}")
 
-                tunnel_cmd.append(f"ec2-user@{node_ip}")
+                tunnel_cmd.append(f"{AWS_USER}@{node_ip}")
 
                 try:
                     print(f"Run SSH tunneling command for {node_id}\n")
@@ -106,6 +107,7 @@ class AwsNodeProvider:
                     logger.warning(f"SSH tunneling command failed for {node_id}: " + str(e))
                     time.sleep(10)
 
+            # TODO put this into the config file instead.
             ray_start_command = "ray start"
             ray_start_command += " --address=\"localhost:6379\""
             ray_start_command += " --node-ip-address=\"" + node_ip + "\""
@@ -113,7 +115,7 @@ class AwsNodeProvider:
 
             logger.info(f"Run init command ({ray_start_command})\n")
             # TODO fix auth config
-            self.get_command_runner("AwsNodeProvider create:", node_id, {"ssh_user": "ec2-user", "ssh_private_key": "~/ray_bootstrap_key.pem"}, self.cluster_name, subprocess, False).run(ray_start_command)
+            self.get_command_runner("AwsNodeProvider create:", node_id, {"ssh_user": AWS_USER, "ssh_private_key": "~/ray_bootstrap_key.pem"}, self.cluster_name, subprocess, False).run(ray_start_command)
 
         prefixed_res = {}
         for raw_id, instance in res.items():
@@ -139,6 +141,7 @@ class AwsNodeProvider:
         return self._delegate.terminate_nodes(node_ids)
 
     def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
+        tag_filters = tag_filters.copy() # AWSNodeProvider modifies tag_filters
         return self._delegate.non_terminated_nodes(tag_filters)
 
     def is_running(self, node_id: str) -> bool:
@@ -158,7 +161,6 @@ class AwsNodeProvider:
 
     def internal_ip(self, node_id: str) -> Optional[str]:
         # Force use of external IP since we're using use_internal_ips: False
-        # This ensures Ray tracks nodes by public IP consistently
         return self._delegate.external_ip(node_id)
 
     def get_node_id(self, ip_address: str, use_internal_ip: bool = True) -> str:
