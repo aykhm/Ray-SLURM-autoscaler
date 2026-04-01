@@ -2,11 +2,13 @@ import copy
 from typing import Any, Dict, List, Optional, Tuple
 
 from ray.autoscaler._private.slurm.aws_node_provider import AwsNodeProvider
+from ray.autoscaler._private.slurm.gcp_node_provider import GcpNodeProvider
 from ray.autoscaler._private.slurm.slurm_node_provider import SlurmNodeProvider
 
 AWS_PREFIX = "aws"
+GCP_PREFIX = "gcp"
 SLURM_PREFIX = "slurm"
-ALL_PREFIXES = [AWS_PREFIX, SLURM_PREFIX]
+ALL_PREFIXES = [AWS_PREFIX, GCP_PREFIX, SLURM_PREFIX]
 
 
 class HybridNodeProvider:
@@ -18,13 +20,45 @@ class HybridNodeProvider:
             AWS_PREFIX: AwsNodeProvider(
                 provider_config[AWS_PREFIX], cluster_name, slurm_provider.state
             ),
+            GCP_PREFIX: GcpNodeProvider(
+                provider_config[GCP_PREFIX], cluster_name, slurm_provider.state
+            ),
             SLURM_PREFIX: slurm_provider,
         }
 
     @staticmethod
+    def _node_types_for_provider(cluster_config: Dict[str, Any], prefix: str) -> Dict[str, Any]:
+        return {
+            k: v for k, v in cluster_config.get("available_node_types", {}).items()
+            if v.get("node_config", {}).get("provider") == prefix
+        }
+
+    @staticmethod
+    def _bootstrap_scoped(
+        cluster_config: Dict[str, Any],
+        prefix: str,
+        bootstrap_fn,
+    ) -> Dict[str, Any]:
+        scoped_node_types = HybridNodeProvider._node_types_for_provider(cluster_config, prefix)
+
+        scoped_config = copy.deepcopy(cluster_config)
+        scoped_config["available_node_types"] = scoped_node_types
+        bootstrapped = bootstrap_fn(scoped_config)
+
+        config = copy.deepcopy(cluster_config)
+        for k, v in bootstrapped["available_node_types"].items():
+            config["available_node_types"][k] = v
+
+        # Copy bootstrapped auth configs to provider specific section
+        config["provider"][prefix]["auth"].update(bootstrapped["auth"])
+
+        return config
+
+    @staticmethod
     def bootstrap_config(cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = AwsNodeProvider.bootstrap_config(config)
+        config = HybridNodeProvider._bootstrap_scoped(config, AWS_PREFIX, AwsNodeProvider.bootstrap_config)
+        config = HybridNodeProvider._bootstrap_scoped(config, GCP_PREFIX, GcpNodeProvider.bootstrap_config)
         config = SlurmNodeProvider.bootstrap_config(config)
         return config
 
@@ -33,7 +67,8 @@ class HybridNodeProvider:
         cluster_config: Dict[str, Any],
     ) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = AwsNodeProvider.fillout_available_node_types_resources(config)
+        config = HybridNodeProvider._bootstrap_scoped(config, AWS_PREFIX, AwsNodeProvider.fillout_available_node_types_resources)
+        config = HybridNodeProvider._bootstrap_scoped(config, GCP_PREFIX, GcpNodeProvider.fillout_available_node_types_resources)
         config = SlurmNodeProvider.fillout_available_node_types_resources(config)
         return config
 
@@ -82,7 +117,13 @@ class HybridNodeProvider:
         config = copy.deepcopy(node_config)
         config.pop("provider", None)
 
-        return self._providers[provider].create_node(config, tags, count)
+        res = self._providers[provider].create_node(config, tags, count)
+
+        prefixed_res = {}
+        if res:
+            for raw_id, instance in res.items():
+                prefixed_res[self._prefix(provider, raw_id)] = instance
+        return prefixed_res
 
     def create_node_with_resources_and_labels(
         self,

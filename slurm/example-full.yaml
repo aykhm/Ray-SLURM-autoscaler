@@ -15,9 +15,6 @@ upscaling_speed: 1.0
 # If a node is idle for this many minutes, it will be removed.
 idle_timeout_minutes: 1
 
-auth:
-    ssh_user: ec2-user # Use for aws nodes
-
 provider:
   type: external
   module: ray.autoscaler._private.slurm.hybrid_node_provider.HybridNodeProvider
@@ -34,6 +31,17 @@ provider:
     availability_zone: us-east-2a
     cache_stopped_nodes: False
     use_internal_ips: False # by default autoscaler tries to connect to ec2 nodes using internal ip
+
+    auth:
+      ssh_user: ec2-user # Required to be here for multicloud, instead of under top-level "auth"
+
+  gcp:
+    region: us-central1
+    availability_zone: us-central1-a
+    project_id: test-project-365620
+
+    auth:
+      ssh_user: aykhm # Required to be here for multicloud, instead of under top-level "auth"
 
 # Specify the type for the ray head node (as configured below).
 head_node_type: head
@@ -71,15 +79,30 @@ available_node_types:
 
   aws_worker:
     min_workers: 0
-    max_workers: 3
+    max_workers: 1
     resources: {"CPU": 2, "GPU": 0}
     node_config:
       provider: aws
-      # Standard Ray AWS node config fields:
       InstanceType: t3.small
       ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
       InstanceMarketOptions:
         MarketType: spot
+
+  gcp_worker:
+    min_workers: 0
+    max_workers: 1
+    resources: {"CPU": 2, "GPU": 0}
+    node_config:
+      provider: gcp
+      machineType: e2-small
+      disks:
+        - boot: true
+          autoDelete: true
+          type: PERSISTENT
+          initializeParams:
+            sourceImage: projects/test-project-365620/global/images/python3923-ray2491
+      scheduling:
+        - preemptible: true
 
 # Do not modify the fields below!
 

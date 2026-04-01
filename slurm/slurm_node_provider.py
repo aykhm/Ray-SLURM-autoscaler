@@ -92,34 +92,6 @@ def _test_free_port(local_ip: str, port: int) -> bool:
     s.close()
     return ret
 
-def _get_free_ports(local_ip: str, count: int) -> List[int]:
-    """Return free ports on a specific NIC
-
-    Args:
-        local_ip: The IP of specific NIC on the local machine
-        count: The number of ports to get
-    """
-    
-    ret = []
-    sockets = []
-
-    for _ in count:
-        s = socket.socket()
-
-        # The released port would be reused immediately
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Find to an available port
-        s.bind((local_ip, 0)) 
-
-        sockets.append(s)
-        ret.append(s.getsockname()[1])
-        
-    for s in sockets:
-        s.close()
-
-    return ret
-
 def _get_free_ports_range(local_ip: str, lower_bound: int, higher_bound: int, count: int) -> List[int]:
     """Get a free ports within range [lower_boud, higher_bound] on a specific NIC
 

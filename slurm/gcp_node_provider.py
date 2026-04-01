@@ -4,49 +4,40 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
-from ray.autoscaler._private.aws.node_provider import AWSNodeProvider as RayAwsNodeProvider
+from ray.autoscaler._private.gcp.node_provider import GCPNodeProvider as RayGcpNodeProvider
 from ray.autoscaler._private.slurm.slurm_node_provider import SlurmClusterState
 
 logger = logging.getLogger(__name__)
 
-class AwsNodeProvider:
+class GcpNodeProvider:
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str, slurm_cluster_state: SlurmClusterState) -> None:
         self.slurm_cluster_state = slurm_cluster_state
         self.cluster_name = cluster_name
 
         # This field is filled by _bootstrap_scoped in HybridNodeProvider.
-        self.auth_config = provider_config.get("auth", {})         
+        self.auth_config = provider_config.get("auth", {})
 
-        self._delegate = RayAwsNodeProvider(provider_config, cluster_name)
+        self._delegate = RayGcpNodeProvider(provider_config, cluster_name)
 
     @staticmethod
     def bootstrap_config(cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
 
-        if "aws" in config["provider"]:
+        if "gcp" in config["provider"]:
             # Fix config for bootstrapping by moving some fields to top level
-            config["auth"]["ssh_user"] = config["provider"]["aws"]["auth"]["ssh_user"]
-            provider_keys = config["provider"]["aws"].keys()
+            config["auth"]["ssh_user"] = config["provider"]["gcp"]["auth"]["ssh_user"]
+            provider_keys = config["provider"]["gcp"].keys()
             for k in provider_keys:
-                config["provider"][k] = config["provider"]["aws"][k]
-
-            import ray.autoscaler._private.aws.config as aws_config
-            _configure_iam_role = aws_config._configure_iam_role
-            aws_config._configure_iam_role = lambda c: c # monkeypatch the configure_iam_role part
-                                                         # of RawAwsNodeProvider.bootstrap_config to
-                                                         # be a noop, since it assumes that the head
-                                                         # node is under aws.
+                config["provider"][k] = config["provider"]["gcp"][k]
 
             # Run bootstrap config
-            config = RayAwsNodeProvider.bootstrap_config(config)
+            config = RayGcpNodeProvider.bootstrap_config(config)
             
             # Undo fixes
             config["auth"].pop("ssh_user")
             for k in provider_keys:
                 config['provider'].pop(k)
 
-            aws_config._configure_iam_role = _configure_iam_role
-    
         return config
 
     @staticmethod
@@ -54,7 +45,7 @@ class AwsNodeProvider:
         cluster_config: Dict[str, Any],
     ) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = RayAwsNodeProvider.fillout_available_node_types_resources(config)
+        config = RayGcpNodeProvider.fillout_available_node_types_resources(config)
         return config
 
     def prepare_for_head_node(self, cluster_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,7 +76,7 @@ class AwsNodeProvider:
 
             while True:
                 ports = [6379, 10001, 7000, 7001, 7002]
-                ports.extend(range(10002, 10100)) # TODO hacky, should be configurable
+                ports.extend(range(10002, 10100))  # TODO hacky, should be configurable
 
                 tunnel_cmd = [
                     "ssh",
@@ -114,14 +105,13 @@ class AwsNodeProvider:
                     logger.warning(f"SSH tunneling command failed for {node_id}: " + str(e))
                     time.sleep(10)
 
-            # TODO put this into the config file instead.
             ray_start_command = "ray start"
             ray_start_command += " --address=\"localhost:6379\""
             ray_start_command += " --node-ip-address=\"" + node_ip + "\""
             ray_start_command += " --redis-password=\"" + meta_info["redis_password"] + "\""
 
             logger.info(f"Run init command ({ray_start_command})\n")
-            self.get_command_runner("AwsNodeProvider create:", node_id, {}, self.cluster_name, subprocess, False).run(ray_start_command)
+            self.get_command_runner("GcpNodeProvider create:", node_id, {}, self.cluster_name, subprocess, False).run(ray_start_command)
 
         return res
 
@@ -144,7 +134,6 @@ class AwsNodeProvider:
         return self._delegate.terminate_nodes(node_ids)
 
     def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
-        tag_filters = tag_filters.copy() # AWSNodeProvider modifies tag_filters
         return self._delegate.non_terminated_nodes(tag_filters)
 
     def is_running(self, node_id: str) -> bool:
@@ -154,7 +143,7 @@ class AwsNodeProvider:
         return self._delegate.is_terminated(node_id)
 
     def set_node_tags(self, node_id: str, tags: Dict[str, str]) -> None:
-        return self._delegate.set_node_tags(node_id, tags)
+        self._delegate.set_node_tags(node_id, tags)
 
     def node_tags(self, node_id: str) -> Dict[str, str]:
         return self._delegate.node_tags(node_id)
@@ -163,7 +152,7 @@ class AwsNodeProvider:
         return self._delegate.external_ip(node_id)
 
     def internal_ip(self, node_id: str) -> Optional[str]:
-        # Force use of external IP since we're using use_internal_ips: False
+        # Force use of external IP since we're tunneling
         return self._delegate.external_ip(node_id)
 
     def get_node_id(self, ip_address: str, use_internal_ip: bool = True) -> str:
@@ -185,7 +174,7 @@ class AwsNodeProvider:
         use_internal_ip: bool,
         docker_config: Optional[Dict[str, Any]] = None,
     ):
-        use_internal_ip = False # TODO hacky
+        use_internal_ip = False  # TODO hacky
         auth_config = {**self.auth_config, **auth_config}
         return self._delegate.get_command_runner(
             log_prefix,

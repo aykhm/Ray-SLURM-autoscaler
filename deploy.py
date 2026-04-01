@@ -54,6 +54,7 @@ if __name__ == "__main__":
         "cp", 
         "slurm/aws_node_provider.py",
         "slurm/empty_command_runner.py",
+        "slurm/gcp_node_provider.py",
         "slurm/hybrid_node_provider.py",
         "slurm/slurm_node_provider.py",
         "slurm/slurm_commands.py",
