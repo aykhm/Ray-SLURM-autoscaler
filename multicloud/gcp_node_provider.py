@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ray.autoscaler._private.gcp.node_provider import GCPNodeProvider as RayGcpNodeProvider
-from ray.autoscaler._private.slurm.slurm_node_provider import SlurmClusterState
+from ray.autoscaler._private.slurm.node_provider import SlurmClusterState
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class GcpNodeProvider:
         self.slurm_cluster_state = slurm_cluster_state
         self.cluster_name = cluster_name
 
-        # This field is filled by _bootstrap_scoped in HybridNodeProvider.
+        # This field is filled by _bootstrap_scoped in MulticloudNodeProvider.
         self.auth_config = provider_config.get("auth", {})
 
         self._delegate = RayGcpNodeProvider(provider_config, cluster_name)

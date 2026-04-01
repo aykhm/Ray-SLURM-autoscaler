@@ -17,7 +17,7 @@ idle_timeout_minutes: 1
 
 provider:
   type: external
-  module: ray.autoscaler._private.slurm.hybrid_node_provider.HybridNodeProvider
+  module: ray.autoscaler._private.multicloud.node_provider.MulticloudNodeProvider
 
   slurm:
     temp_folder_name: [_DEPLOY_RAY_PATH_]/autoscaler/slurm/temp_script/ # Need to be absolute path

@@ -34,29 +34,36 @@ if __name__ == "__main__":
         RAY_PATH = RAY_PATH[:-1]
 
     RAY_SLURM_PATH = RAY_PATH + "/autoscaler/_private/slurm"
+    RAY_MULTICLOUD_PATH = RAY_PATH + "/autoscaler/_private/multicloud"
     TEMPLATE_PATH = RAY_SLURM_PATH + "/template"
     
     if not os.path.exists(RAY_PATH):
         print("Ray path is not vaild. Please fill the fields in deploy.py correctly")
         exit(0)
 
-    if os.path.exists(RAY_SLURM_PATH):
+    if os.path.exists(RAY_SLURM_PATH) or os.path.exists(RAY_MULTICLOUD_PATH):
         ans = input("Ray-SLURM packages already exist. Overwrite? [y/n]: ")
         if ans != 'y':
             print("Exited")
             exit(0)
 
     os.makedirs(RAY_SLURM_PATH, exist_ok=True)
+    os.makedirs(RAY_MULTICLOUD_PATH, exist_ok=True)
     os.makedirs(TEMPLATE_PATH, exist_ok=True)
 
     # Copy the files that don't need to be modified
     subprocess.run([
+        "cp",
+        "multicloud/__init__.py",
+        "multicloud/aws_node_provider.py",
+        "multicloud/gcp_node_provider.py",
+        "multicloud/node_provider.py",
+        RAY_MULTICLOUD_PATH
+    ])
+    subprocess.run([
         "cp", 
-        "slurm/aws_node_provider.py",
         "slurm/empty_command_runner.py",
-        "slurm/gcp_node_provider.py",
-        "slurm/hybrid_node_provider.py",
-        "slurm/slurm_node_provider.py",
+        "slurm/node_provider.py",
         "slurm/slurm_commands.py",
         RAY_SLURM_PATH
     ])
