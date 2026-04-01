@@ -4,18 +4,29 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
-from ray.autoscaler._private.gcp.node_provider import GCPNodeProvider as RayGcpNodeProvider
+from googleapiclient import discovery
+import google.auth
+
+from ray.autoscaler._private.gcp.node_provider import (
+    GCPNodeProvider as RayGcpNodeProvider,
+)
 from ray.autoscaler._private.slurm.node_provider import SlurmClusterState
 
 logger = logging.getLogger(__name__)
 
-class GcpNodeProvider:
-    def __init__(self, provider_config: Dict[str, Any], cluster_name: str, slurm_cluster_state: SlurmClusterState) -> None:
-        self.slurm_cluster_state = slurm_cluster_state
-        self.cluster_name = cluster_name
 
-        # This field is filled by _bootstrap_scoped in MulticloudNodeProvider.
-        self.auth_config = provider_config.get("auth", {})
+class GcpNodeProvider:
+    def __init__(
+        self,
+        provider_config: Dict[str, Any],
+        cluster_name: str,
+        slurm_cluster_state: SlurmClusterState,
+    ) -> None:
+        # Note that provider_config["auth"] is filled by _bootstrap_scoped in MulticloudNodeProvider.
+        self.provider_config = provider_config
+
+        self.cluster_name = cluster_name
+        self.slurm_cluster_state = slurm_cluster_state
 
         self._delegate = RayGcpNodeProvider(provider_config, cluster_name)
 
@@ -32,11 +43,11 @@ class GcpNodeProvider:
 
             # Run bootstrap config
             config = RayGcpNodeProvider.bootstrap_config(config)
-            
+
             # Undo fixes
             config["auth"].pop("ssh_user")
             for k in provider_keys:
-                config['provider'].pop(k)
+                config["provider"].pop(k)
 
         return config
 
@@ -80,12 +91,18 @@ class GcpNodeProvider:
 
                 tunnel_cmd = [
                     "ssh",
-                    "-i", self.auth_config["ssh_private_key"],
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "ExitOnForwardFailure=yes",
-                    "-o", "ServerAliveInterval=5",
-                    "-o", "ServerAliveCountMax=3",
+                    "-i",
+                    self.provider_config["auth"]["ssh_private_key"],
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "ExitOnForwardFailure=yes",
+                    "-o",
+                    "ServerAliveInterval=5",
+                    "-o",
+                    "ServerAliveCountMax=3",
                     "-f",
                     "-N",
                 ]
@@ -94,7 +111,9 @@ class GcpNodeProvider:
                     tunnel_cmd.append("-R")
                     tunnel_cmd.append(f"{port}:localhost:{port}")
 
-                tunnel_cmd.append(f"{self.auth_config['ssh_user']}@{node_ip}")
+                tunnel_cmd.append(
+                    f"{self.provider_config['auth']['ssh_user']}@{node_ip}"
+                )
 
                 try:
                     print(f"Run SSH tunneling command for {node_id}\n")
@@ -102,16 +121,27 @@ class GcpNodeProvider:
                     print(f"SSH tunnel setup for {node_id}\n")
                     break
                 except subprocess.CalledProcessError as e:
-                    logger.warning(f"SSH tunneling command failed for {node_id}: " + str(e))
+                    logger.warning(
+                        f"SSH tunneling command failed for {node_id}: " + str(e)
+                    )
                     time.sleep(10)
 
             ray_start_command = "ray start"
-            ray_start_command += " --address=\"localhost:6379\""
-            ray_start_command += " --node-ip-address=\"" + node_ip + "\""
-            ray_start_command += " --redis-password=\"" + meta_info["redis_password"] + "\""
+            ray_start_command += ' --address="localhost:6379"'
+            ray_start_command += ' --node-ip-address="' + node_ip + '"'
+            ray_start_command += (
+                ' --redis-password="' + meta_info["redis_password"] + '"'
+            )
 
             logger.info(f"Run init command ({ray_start_command})\n")
-            self.get_command_runner("GcpNodeProvider create:", node_id, {}, self.cluster_name, subprocess, False).run(ray_start_command)
+            self.get_command_runner(
+                "GcpNodeProvider create:",
+                node_id,
+                {},
+                self.cluster_name,
+                subprocess,
+                False,
+            ).run(ray_start_command)
 
         return res
 
@@ -175,7 +205,7 @@ class GcpNodeProvider:
         docker_config: Optional[Dict[str, Any]] = None,
     ):
         use_internal_ip = False  # TODO hacky
-        auth_config = {**self.auth_config, **auth_config}
+        auth_config = {**self.provider_config["auth"], **auth_config}
         return self._delegate.get_command_runner(
             log_prefix,
             node_id,
@@ -185,3 +215,63 @@ class GcpNodeProvider:
             use_internal_ip,
             docker_config,
         )
+
+    def get_spot_price(self, node_config: Dict[str, Any]) -> float:
+        machine_type = node_config["machineType"]
+        region = self.provider_config["region"]
+        zone = self.provider_config["availability_zone"]
+
+        credentials, project = google.auth.default()
+
+        # Get machine type specs (vCPUs and memory)
+        compute = discovery.build("compute", "v1", credentials=credentials)
+        mt = (
+            compute.machineTypes()
+            .get(project=project, zone=zone, machineType=machine_type)
+            .execute()
+        )
+        vcpus = mt["guestCpus"]
+        memory_gb = mt["memoryMb"] / 1024
+
+        family = machine_type.split("-")[0].upper()  # "e2-small" -> "E2"
+
+        billing = discovery.build("cloudbilling", "v1", credentials=credentials)
+
+        # Compute Engine service ID is a fixed constant — no need to look it up
+        compute_service = "services/6F81-5844-456A"
+
+        cpu_price = 0.0
+        ram_price = 0.0
+        page_token = None
+        while True:
+            kwargs = {"parent": compute_service, "pageSize": 500}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            resp = billing.services().skus().list(**kwargs).execute()
+
+            for sku in resp.get("skus", []):
+                desc = sku["description"]
+                if region not in sku.get("serviceRegions", []):
+                    continue
+                if f"Spot Preemptible {family} Instance" not in desc:
+                    continue
+                tiers = sku["pricingInfo"][0]["pricingExpression"]["tieredRates"]
+                unit_price = tiers[0]["unitPrice"]
+                price = float(unit_price["units"]) + unit_price.get("nanos", 0) / 1e9
+                if "Core" in desc and cpu_price == 0.0:
+                    cpu_price = price
+                elif "Ram" in desc and ram_price == 0.0:
+                    ram_price = price
+
+            page_token = resp.get("nextPageToken")
+            if not page_token or (cpu_price > 0.0 and ram_price > 0.0):
+                break
+
+        if cpu_price == 0.0 and ram_price == 0.0:
+            raise ValueError(
+                f"No Spot prices found for {machine_type} (family {family}) in {region}"
+            )
+
+        price = vcpus * cpu_price + memory_gb * ram_price
+        print(f"gcp: price {price}")
+        return price

@@ -77,32 +77,57 @@ available_node_types:
         - "#SBATCH --account=bcbb-delta-cpu"
         - "#SBATCH --partition=cpu"
 
-  aws_worker:
+  cheap_cloud_worker:
     min_workers: 0
-    max_workers: 1
+    max_workers: 2
     resources: {"CPU": 2, "GPU": 0}
-    node_config:
-      provider: aws
-      InstanceType: t3.small
-      ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
-      InstanceMarketOptions:
-        MarketType: spot
 
-  gcp_worker:
-    min_workers: 0
-    max_workers: 1
-    resources: {"CPU": 2, "GPU": 0}
     node_config:
-      provider: gcp
-      machineType: e2-small
-      disks:
-        - boot: true
-          autoDelete: true
-          type: PERSISTENT
-          initializeParams:
-            sourceImage: projects/test-project-365620/global/images/python3923-ray2491
-      scheduling:
-        - preemptible: true
+      provider: cheapest
+
+      aws:
+        InstanceType: t3.small
+        ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
+        InstanceMarketOptions:
+          MarketType: spot
+      
+      gcp:
+        machineType: e2-small
+        disks:
+          - boot: true
+            autoDelete: true
+            type: PERSISTENT
+            initializeParams:
+              sourceImage: projects/test-project-365620/global/images/python3923-ray2491
+        scheduling:
+          - provisioningModel: SPOT
+
+  # aws_worker:
+  #   min_workers: 0
+  #   max_workers: 1
+  #   resources: {"CPU": 2, "GPU": 0}
+  #   node_config:
+  #     provider: aws
+  #     InstanceType: t3.small
+  #     ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
+  #     InstanceMarketOptions:
+  #       MarketType: spot
+
+  # gcp_worker:
+  #   min_workers: 0
+  #   max_workers: 1
+  #   resources: {"CPU": 2, "GPU": 0}
+  #   node_config:
+  #     provider: gcp
+  #     machineType: e2-small
+  #     disks:
+  #       - boot: true
+  #         autoDelete: true
+  #         type: PERSISTENT
+  #         initializeParams:
+  #           sourceImage: projects/test-project-365620/global/images/python3923-ray2491
+  #     scheduling:
+  #       - provisioningModel: SPOT
 
 # Do not modify the fields below!
 

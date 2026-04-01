@@ -5,32 +5,31 @@ from ray.autoscaler._private.multicloud.aws_node_provider import AwsNodeProvider
 from ray.autoscaler._private.multicloud.gcp_node_provider import GcpNodeProvider
 from ray.autoscaler._private.slurm.node_provider import SlurmNodeProvider
 
-AWS_PREFIX = "aws"
-GCP_PREFIX = "gcp"
-SLURM_PREFIX = "slurm"
-ALL_PREFIXES = [AWS_PREFIX, GCP_PREFIX, SLURM_PREFIX]
+AWS_PROVIDER = "aws"
+GCP_PROVIDER = "gcp"
+SLURM_PROVIDER = "slurm"
+CLOUD_PROVIDERS = [AWS_PROVIDER, GCP_PROVIDER]
+ALL_PROVIDERS = CLOUD_PROVIDERS + [SLURM_PROVIDER]
+
+CHEAPEST_PROVIDER = "cheapest"
 
 
 class MulticloudNodeProvider:
     """Multicloud provider that routes calls to Slurm or AWS based on node_config."""
 
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str) -> None:
-        slurm_provider = SlurmNodeProvider(provider_config[SLURM_PREFIX], cluster_name)
+        self._provider_config = provider_config
+        slurm_provider = SlurmNodeProvider(
+            provider_config[SLURM_PROVIDER], cluster_name
+        )
         self._providers = {
-            AWS_PREFIX: AwsNodeProvider(
-                provider_config[AWS_PREFIX], cluster_name, slurm_provider.state
+            AWS_PROVIDER: AwsNodeProvider(
+                provider_config[AWS_PROVIDER], cluster_name, slurm_provider.state
             ),
-            GCP_PREFIX: GcpNodeProvider(
-                provider_config[GCP_PREFIX], cluster_name, slurm_provider.state
+            GCP_PROVIDER: GcpNodeProvider(
+                provider_config[GCP_PROVIDER], cluster_name, slurm_provider.state
             ),
-            SLURM_PREFIX: slurm_provider,
-        }
-
-    @staticmethod
-    def _node_types_for_provider(cluster_config: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        return {
-            k: v for k, v in cluster_config.get("available_node_types", {}).items()
-            if v.get("node_config", {}).get("provider") == prefix
+            SLURM_PROVIDER: slurm_provider,
         }
 
     @staticmethod
@@ -39,15 +38,39 @@ class MulticloudNodeProvider:
         prefix: str,
         bootstrap_fn,
     ) -> Dict[str, Any]:
-        scoped_node_types = MulticloudNodeProvider._node_types_for_provider(cluster_config, prefix)
-
         scoped_config = copy.deepcopy(cluster_config)
-        scoped_config["available_node_types"] = scoped_node_types
+        scoped_config["available_node_types"] = {}
+        for k, v in cluster_config.get("available_node_types", {}).items():
+            node_provider = v.get("node_config", {}).get("provider")
+            if node_provider == prefix:
+                scoped_config["available_node_types"][k] = v
+            elif node_provider == CHEAPEST_PROVIDER and prefix in v.get(
+                "node_config", {}
+            ):
+                # Expose the provider-specific sub-config for bootstrapping
+                scoped = copy.deepcopy(v)
+                scoped["node_config"] = {**v["node_config"][prefix], "provider": prefix}
+                scoped_config["available_node_types"][k] = scoped 
+
         bootstrapped = bootstrap_fn(scoped_config)
 
         config = copy.deepcopy(cluster_config)
         for k, v in bootstrapped["available_node_types"].items():
-            config["available_node_types"][k] = v
+            orig_provider = (
+                cluster_config["available_node_types"]
+                .get(k, {})
+                .get("node_config", {})
+                .get("provider")
+            )
+            if orig_provider == CHEAPEST_PROVIDER:
+                # Merge bootstrapped sub-config back into the nested cheapest config
+                bootstrapped_sub = copy.deepcopy(v["node_config"])
+                bootstrapped_sub.pop("provider", None)
+                config["available_node_types"][k]["node_config"][prefix] = (
+                    bootstrapped_sub
+                )
+            else:
+                config["available_node_types"][k] = v
 
         # Copy bootstrapped auth configs to provider specific section
         config["provider"][prefix]["auth"].update(bootstrapped["auth"])
@@ -57,8 +80,12 @@ class MulticloudNodeProvider:
     @staticmethod
     def bootstrap_config(cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = MulticloudNodeProvider._bootstrap_scoped(config, AWS_PREFIX, AwsNodeProvider.bootstrap_config)
-        config = MulticloudNodeProvider._bootstrap_scoped(config, GCP_PREFIX, GcpNodeProvider.bootstrap_config)
+        config = MulticloudNodeProvider._bootstrap_scoped(
+            config, AWS_PROVIDER, AwsNodeProvider.bootstrap_config
+        )
+        config = MulticloudNodeProvider._bootstrap_scoped(
+            config, GCP_PROVIDER, GcpNodeProvider.bootstrap_config
+        )
         config = SlurmNodeProvider.bootstrap_config(config)
         return config
 
@@ -67,41 +94,42 @@ class MulticloudNodeProvider:
         cluster_config: Dict[str, Any],
     ) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = MulticloudNodeProvider._bootstrap_scoped(config, AWS_PREFIX, AwsNodeProvider.fillout_available_node_types_resources)
-        config = MulticloudNodeProvider._bootstrap_scoped(config, GCP_PREFIX, GcpNodeProvider.fillout_available_node_types_resources)
+        config = MulticloudNodeProvider._bootstrap_scoped(
+            config, AWS_PROVIDER, AwsNodeProvider.fillout_available_node_types_resources
+        )
+        config = MulticloudNodeProvider._bootstrap_scoped(
+            config, GCP_PROVIDER, GcpNodeProvider.fillout_available_node_types_resources
+        )
         config = SlurmNodeProvider.fillout_available_node_types_resources(config)
         return config
 
     def prepare_for_head_node(self, cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         config = copy.deepcopy(cluster_config)
-        config = self._providers[SLURM_PREFIX].prepare_for_head_node(config)
+        config = self._providers[SLURM_PROVIDER].prepare_for_head_node(config)
         return config
 
     def _route(self, node_id: str) -> Tuple[str, str]:
-        for prefix in ALL_PREFIXES:
-            if node_id.startswith(prefix):
-                return prefix, node_id[len(prefix)+1 :]
+        for provider in ALL_PROVIDERS:
+            if node_id.startswith(provider):
+                return provider, node_id[len(provider) + 1 :]
         raise ValueError(f"Unknown node_id prefix in {node_id}")
 
     def _prefix(self, provider: str, node_id: str) -> str:
-        for prefix in ALL_PREFIXES:
-            if provider == prefix:
-                return prefix + ":" + node_id
-        raise ValueError(f"Unknown provider {provider}")
+        return provider + ":" + node_id
 
     @property
     def max_terminate_nodes(self) -> Optional[int]:
         max = 0
-        for prefix in ALL_PREFIXES:
-            provider_max = self._providers[prefix].max_terminate_nodes
+        for provider in ALL_PROVIDERS:
+            provider_max = self._providers[provider].max_terminate_nodes
             if provider_max is None:
                 return None
             max += provider_max
         return max
 
     def is_readonly(self) -> bool:
-        for prefix in ALL_PREFIXES:
-            if not self._providers[prefix].is_readonly():
+        for provider in ALL_PROVIDERS:
+            if not self._providers[provider].is_readonly():
                 return False
 
         return True
@@ -113,9 +141,16 @@ class MulticloudNodeProvider:
         if provider is None:
             raise ValueError("Node config must specify 'provider' field.")
 
-        # AWSNodeProvider will complain about unknown 'provider' field.
         config = copy.deepcopy(node_config)
-        config.pop("provider", None)
+        if provider == CHEAPEST_PROVIDER:
+            prices = {p: self._providers[p].get_spot_price(node_config[p]) for p in CLOUD_PROVIDERS}
+            provider = min(prices.keys(), key=lambda p: prices[p])
+            print("prices:", prices, "cheapest provider:", provider)
+            config = config[provider]
+
+        # AWSNodeProvider will complain about unknown 'provider' field.
+        if provider == AWS_PROVIDER:
+            config.pop("provider", None)
 
         res = self._providers[provider].create_node(config, tags, count)
 
@@ -153,10 +188,10 @@ class MulticloudNodeProvider:
     def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
         nodes: List[str] = []
 
-        for prefix in ALL_PREFIXES:
-            for nid in self._providers[prefix].non_terminated_nodes(tag_filters):
-                nodes.append(self._prefix(prefix, nid))
-        
+        for provider in ALL_PROVIDERS:
+            for nid in self._providers[provider].non_terminated_nodes(tag_filters):
+                nodes.append(self._prefix(provider, nid))
+
         return nodes
 
     def is_running(self, node_id: str) -> bool:
@@ -184,25 +219,25 @@ class MulticloudNodeProvider:
         return self._providers[provider].internal_ip(raw_id)
 
     def get_node_id(self, ip_address: str, use_internal_ip: bool = True) -> str:
-        for prefix in ALL_PREFIXES:
+        for provider in ALL_PROVIDERS:
             try:
                 return self._prefix(
-                    prefix,
-                    self._providers[prefix].get_node_id(ip_address, use_internal_ip),
+                    provider,
+                    self._providers[provider].get_node_id(ip_address, use_internal_ip),
                 )
             except Exception:
                 pass
         raise ValueError(f"Node with IP {ip_address} not found in any provider.")
 
     def safe_to_scale(self) -> bool:
-        for prefix in ALL_PREFIXES:
-            if not self._providers[prefix].safe_to_scale():
+        for provider in ALL_PROVIDERS:
+            if not self._providers[provider].safe_to_scale():
                 return False
         return True
 
     def post_process(self) -> None:
-        for prefix in ALL_PREFIXES:
-            self._providers[prefix].post_process()
+        for provider in ALL_PROVIDERS:
+            self._providers[provider].post_process()
 
     def get_command_runner(
         self,

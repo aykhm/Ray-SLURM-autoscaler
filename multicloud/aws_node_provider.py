@@ -4,18 +4,28 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
-from ray.autoscaler._private.aws.node_provider import AWSNodeProvider as RayAwsNodeProvider
+import boto3
+
+from ray.autoscaler._private.aws.node_provider import (
+    AWSNodeProvider as RayAwsNodeProvider,
+)
 from ray.autoscaler._private.slurm.node_provider import SlurmClusterState
 
 logger = logging.getLogger(__name__)
 
-class AwsNodeProvider:
-    def __init__(self, provider_config: Dict[str, Any], cluster_name: str, slurm_cluster_state: SlurmClusterState) -> None:
-        self.slurm_cluster_state = slurm_cluster_state
-        self.cluster_name = cluster_name
 
-        # This field is filled by _bootstrap_scoped in MulticloudNodeProvider.
-        self.auth_config = provider_config.get("auth", {})         
+class AwsNodeProvider:
+    def __init__(
+        self,
+        provider_config: Dict[str, Any],
+        cluster_name: str,
+        slurm_cluster_state: SlurmClusterState,
+    ) -> None:
+        # Note that provider_config["auth"] is filled by _bootstrap_scoped in MulticloudNodeProvider.
+        self.provider_config = provider_config
+
+        self.cluster_name = cluster_name
+        self.slurm_cluster_state = slurm_cluster_state
 
         self._delegate = RayAwsNodeProvider(provider_config, cluster_name)
 
@@ -31,22 +41,25 @@ class AwsNodeProvider:
                 config["provider"][k] = config["provider"]["aws"][k]
 
             import ray.autoscaler._private.aws.config as aws_config
+
             _configure_iam_role = aws_config._configure_iam_role
-            aws_config._configure_iam_role = lambda c: c # monkeypatch the configure_iam_role part
-                                                         # of RawAwsNodeProvider.bootstrap_config to
-                                                         # be a noop, since it assumes that the head
-                                                         # node is under aws.
+            aws_config._configure_iam_role = lambda c: (
+                c
+            )  # monkeypatch the configure_iam_role part
+            # of RawAwsNodeProvider.bootstrap_config to
+            # be a noop, since it assumes that the head
+            # node is under aws.
 
             # Run bootstrap config
             config = RayAwsNodeProvider.bootstrap_config(config)
-            
+
             # Undo fixes
             config["auth"].pop("ssh_user")
             for k in provider_keys:
-                config['provider'].pop(k)
+                config["provider"].pop(k)
 
             aws_config._configure_iam_role = _configure_iam_role
-    
+
         return config
 
     @staticmethod
@@ -85,16 +98,22 @@ class AwsNodeProvider:
 
             while True:
                 ports = [6379, 10001, 7000, 7001, 7002]
-                ports.extend(range(10002, 10100)) # TODO hacky, should be configurable
+                ports.extend(range(10002, 10100))  # TODO hacky, should be configurable
 
                 tunnel_cmd = [
                     "ssh",
-                    "-i", self.auth_config["ssh_private_key"],
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "ExitOnForwardFailure=yes",
-                    "-o", "ServerAliveInterval=5",
-                    "-o", "ServerAliveCountMax=3",
+                    "-i",
+                    self.provider_config["auth"]["ssh_private_key"],
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "ExitOnForwardFailure=yes",
+                    "-o",
+                    "ServerAliveInterval=5",
+                    "-o",
+                    "ServerAliveCountMax=3",
                     "-f",
                     "-N",
                 ]
@@ -103,7 +122,9 @@ class AwsNodeProvider:
                     tunnel_cmd.append("-R")
                     tunnel_cmd.append(f"{port}:localhost:{port}")
 
-                tunnel_cmd.append(f"{self.auth_config['ssh_user']}@{node_ip}")
+                tunnel_cmd.append(
+                    f"{self.provider_config['auth']['ssh_user']}@{node_ip}"
+                )
 
                 try:
                     print(f"Run SSH tunneling command for {node_id}\n")
@@ -111,17 +132,28 @@ class AwsNodeProvider:
                     print(f"SSH tunnel setup for {node_id}\n")
                     break
                 except subprocess.CalledProcessError as e:
-                    logger.warning(f"SSH tunneling command failed for {node_id}: " + str(e))
+                    logger.warning(
+                        f"SSH tunneling command failed for {node_id}: " + str(e)
+                    )
                     time.sleep(10)
 
             # TODO put this into the config file instead.
             ray_start_command = "ray start"
-            ray_start_command += " --address=\"localhost:6379\""
-            ray_start_command += " --node-ip-address=\"" + node_ip + "\""
-            ray_start_command += " --redis-password=\"" + meta_info["redis_password"] + "\""
+            ray_start_command += ' --address="localhost:6379"'
+            ray_start_command += ' --node-ip-address="' + node_ip + '"'
+            ray_start_command += (
+                ' --redis-password="' + meta_info["redis_password"] + '"'
+            )
 
             logger.info(f"Run init command ({ray_start_command})\n")
-            self.get_command_runner("AwsNodeProvider create:", node_id, {}, self.cluster_name, subprocess, False).run(ray_start_command)
+            self.get_command_runner(
+                "AwsNodeProvider create:",
+                node_id,
+                {},
+                self.cluster_name,
+                subprocess,
+                False,
+            ).run(ray_start_command)
 
         return res
 
@@ -144,7 +176,7 @@ class AwsNodeProvider:
         return self._delegate.terminate_nodes(node_ids)
 
     def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
-        tag_filters = tag_filters.copy() # AWSNodeProvider modifies tag_filters
+        tag_filters = tag_filters.copy()  # AWSNodeProvider modifies tag_filters
         return self._delegate.non_terminated_nodes(tag_filters)
 
     def is_running(self, node_id: str) -> bool:
@@ -185,8 +217,8 @@ class AwsNodeProvider:
         use_internal_ip: bool,
         docker_config: Optional[Dict[str, Any]] = None,
     ):
-        use_internal_ip = False # TODO hacky
-        auth_config = {**self.auth_config, **auth_config}
+        use_internal_ip = False  # TODO hacky
+        auth_config = {**self.provider_config["auth"], **auth_config}
         return self._delegate.get_command_runner(
             log_prefix,
             node_id,
@@ -196,3 +228,22 @@ class AwsNodeProvider:
             use_internal_ip,
             docker_config,
         )
+
+    def get_spot_price(self, node_config: Dict[str, Any]) -> float:
+        instance_type = node_config["InstanceType"]
+
+        client = boto3.client("ec2", region_name=self.provider_config["region"])
+        response = client.describe_spot_price_history(
+            InstanceTypes=[instance_type],
+            ProductDescriptions=["Linux/UNIX"],
+            AvailabilityZone=self.provider_config["availability_zone"],
+            MaxResults=1,
+        )
+        history = response.get("SpotPriceHistory", [])
+        if not history:
+            print(f"aws error: No spot price found for {instance_type}")
+            return 1e9
+
+        price = float(history[0]["SpotPrice"])
+        print(f"aws: price {price}")
+        return price
