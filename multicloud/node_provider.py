@@ -1,9 +1,19 @@
 import copy
+import json
+import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from ray.autoscaler._private.multicloud.aws_node_provider import AwsNodeProvider
 from ray.autoscaler._private.multicloud.gcp_node_provider import GcpNodeProvider
 from ray.autoscaler._private.slurm.node_provider import SlurmNodeProvider
+
+from ray.autoscaler.tags import (
+    TAG_RAY_NODE_STATUS,
+    TAG_RAY_USER_NODE_TYPE,
+    STATUS_UP_TO_DATE,
+)
+
 
 AWS_PROVIDER = "aws"
 GCP_PROVIDER = "gcp"
@@ -12,6 +22,63 @@ CLOUD_PROVIDERS = [AWS_PROVIDER, GCP_PROVIDER]
 ALL_PROVIDERS = CLOUD_PROVIDERS + [SLURM_PROVIDER]
 
 CHEAPEST_PROVIDER = "cheapest"
+
+BUDGET_UPDATE_INTERVAL_S = 5 * 60  # 5 minutes
+
+TAG_PROVIDER_MACHINE_TYPE = "provider-machine-type"
+
+
+class CloudBudgeter:
+    def __init__(self, state_file: str) -> None:
+        self._state_file = state_file
+
+        if os.path.exists(state_file):
+            with open(state_file) as f:
+                state = json.load(f)
+            print("Loaded cloud budgeter state", state)
+            self._max_spend = state["max_spend"]
+            self._spent = state["spent"]
+            self._last_update_time = state["last_update_time"]
+        else:
+            self._max_spend: Dict[str, float] = {}
+            self._spent: Dict[str, float] = {}
+            self._last_update_time: Dict[str, float] = {}
+
+    def new(self, node_type: str, max_spend: float):
+        if node_type in self._max_spend:
+            assert self._max_spend[node_type] == max_spend
+        else:
+            self._max_spend[node_type] = max_spend
+            self._spent[node_type] = 0
+            self._last_update_time[node_type] = 0
+        self._save()
+
+    def update(self, node_type: str, total_rate: float):
+        now = time.time()
+        if self._last_update_time[node_type] != 0:
+            dt_hours = (now - self._last_update_time[node_type]) / 3600
+            self._spent[node_type] += total_rate * dt_hours
+        self._last_update_time[node_type] = now
+        self._save()
+
+    def is_over_budget(self, node_type: str):
+        return (
+            node_type in self._max_spend
+            and self._max_spend[node_type] > 0
+            and self._spent[node_type] >= self._max_spend[node_type]
+        )
+
+    def _save(self):
+        print("Saving cloud budgeter state")
+        with open(self._state_file, "w") as f:
+            json.dump(
+                {
+                    "max_spend": self._max_spend,
+                    "spent": self._spent,
+                    "last_update_time": self._last_update_time,
+                },
+                f,
+            )
 
 
 class MulticloudNodeProvider:
@@ -32,6 +99,10 @@ class MulticloudNodeProvider:
             SLURM_PROVIDER: slurm_provider,
         }
 
+        # TODO need to delete at end
+        state_file = os.path.expanduser(f"~/.ray/budget_{cluster_name}.json")
+        self._cloud_budgeter = CloudBudgeter(state_file)
+
     @staticmethod
     def _bootstrap_scoped(
         cluster_config: Dict[str, Any],
@@ -50,7 +121,7 @@ class MulticloudNodeProvider:
                 # Expose the provider-specific sub-config for bootstrapping
                 scoped = copy.deepcopy(v)
                 scoped["node_config"] = {**v["node_config"][prefix], "provider": prefix}
-                scoped_config["available_node_types"][k] = scoped 
+                scoped_config["available_node_types"][k] = scoped
 
         bootstrapped = bootstrap_fn(scoped_config)
 
@@ -141,24 +212,50 @@ class MulticloudNodeProvider:
         if provider is None:
             raise ValueError("Node config must specify 'provider' field.")
 
-        config = copy.deepcopy(node_config)
+        # Start tracking this node type (although it isn't always the first time `create_node` was
+        # called for a node type).
+        node_type = tags[TAG_RAY_USER_NODE_TYPE]
+        if self._cloud_budgeter.is_over_budget(node_type):
+            print(f"Not creating a {node_type} (over budget)")
+            return None
+        self._cloud_budgeter.new(node_type, node_config.get("max_spend", -1))
+
+        node_config = copy.deepcopy(node_config)
         if provider == CHEAPEST_PROVIDER:
-            prices = {p: self._providers[p].get_spot_price(node_config[p]) for p in CLOUD_PROVIDERS}
-            provider = min(prices.keys(), key=lambda p: prices[p])
-            print("prices:", prices, "cheapest provider:", provider)
-            config = config[provider]
+            rates = {
+                p: self._providers[p].get_spot_rate(
+                    self._providers[p].provider_machine_type(node_config[p])
+                )
+                for p in CLOUD_PROVIDERS
+            }
+            provider = min(rates.keys(), key=lambda p: rates[p])
+            print("rates:", rates, "cheapest provider:", provider)
+            node_config = node_config[provider]
 
         # AWSNodeProvider will complain about unknown 'provider' field.
         if provider == AWS_PROVIDER:
-            config.pop("provider", None)
+            node_config.pop("provider", None)
 
-        res = self._providers[provider].create_node(config, tags, count)
+        node_ids_and_instances = self._providers[provider].create_node(
+            node_config, tags, count
+        )
 
-        prefixed_res = {}
-        if res:
-            for raw_id, instance in res.items():
-                prefixed_res[self._prefix(provider, raw_id)] = instance
-        return prefixed_res
+        # Attach provider prefix to node id's.
+        prefixed_node_ids_and_instances = {}
+        if node_ids_and_instances:
+            for raw_id, instance in node_ids_and_instances.items():
+                prefixed_node_ids_and_instances[self._prefix(provider, raw_id)] = (
+                    instance
+                )
+
+        # Add provider specific machine type to tag to be used in post_process.
+        for node_id in prefixed_node_ids_and_instances.keys():
+            tags = {
+                TAG_PROVIDER_MACHINE_TYPE: self._providers[provider].provider_machine_type(node_config)
+            }
+            self.set_node_tags(node_id, tags)
+
+        return prefixed_node_ids_and_instances
 
     def create_node_with_resources_and_labels(
         self,
@@ -238,6 +335,52 @@ class MulticloudNodeProvider:
     def post_process(self) -> None:
         for provider in ALL_PROVIDERS:
             self._providers[provider].post_process()
+
+        # Create a mapping of worker node type to a list of (node_id, provider_machine_type).
+        worker_node_compositions: Dict[str, List[Tuple[str, str]]] = {}
+        for provider in CLOUD_PROVIDERS:
+            node_ids = [
+                self._prefix(provider, id)
+                for id in self._providers[provider].non_terminated_nodes({})
+            ]
+            for node_id in node_ids:
+                tags = self.node_tags(node_id)
+
+                # Only count time node is actually running.
+                if (
+                    tags[TAG_RAY_NODE_STATUS] != STATUS_UP_TO_DATE
+                    or TAG_PROVIDER_MACHINE_TYPE not in tags
+                ):
+                    continue
+
+                node_type = tags[TAG_RAY_USER_NODE_TYPE]
+                provider_machine_type = tags[TAG_PROVIDER_MACHINE_TYPE]
+
+                machine = (node_id, provider_machine_type)
+
+                if node_type not in worker_node_compositions:
+                    worker_node_compositions[node_type] = []
+
+                worker_node_compositions[node_type].append(machine)
+
+        print("comp", worker_node_compositions)
+
+        # Update the current spent cost for each worker type.
+        for node_type, machines in worker_node_compositions.items():
+            print("Tracking", node_type)
+            if machines:
+                # Add the rates of all cloud machines running for this worker type.
+                total_rate = 0
+                for node_id, machine_type in machines:
+                    provider, _ = self._route(node_id)
+                    rate = self._providers[provider].get_spot_rate(machine_type)
+                    print(f"({provider}), ({machine_type}), ({rate})")
+                    total_rate += rate
+
+                self._cloud_budgeter.update(node_type, total_rate)
+
+                if self._cloud_budgeter.is_over_budget(node_type):
+                    self.terminate_nodes([node_id for node_id, _ in machines])
 
     def get_command_runner(
         self,

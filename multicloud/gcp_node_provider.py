@@ -216,8 +216,9 @@ class GcpNodeProvider:
             docker_config,
         )
 
-    def get_spot_price(self, node_config: Dict[str, Any]) -> float:
-        machine_type = node_config["machineType"]
+    def get_spot_rate(self, provider_machine_type: str) -> float:
+        return 4.0
+        machine_type = provider_machine_type
         region = self.provider_config["region"]
         zone = self.provider_config["availability_zone"]
 
@@ -275,3 +276,6 @@ class GcpNodeProvider:
         price = vcpus * cpu_price + memory_gb * ram_price
         print(f"gcp: price {price}")
         return price
+    
+    def provider_machine_type(self, node_config: Dict[str, Any]) -> str:
+        return node_config["machineType"]

@@ -85,6 +85,8 @@ available_node_types:
     node_config:
       provider: cheapest
 
+      max_spend: 10
+
       aws:
         InstanceType: t3.small
         ImageId: ami-0f4e4cb87f22c68bc # amazon-linux-python3.9.23-ray2.49.1-v2 (python3.9.23, ray2.49.1, matplotlib 3.9.4, numpy 2.0.2, ssh tunneling enabled)
