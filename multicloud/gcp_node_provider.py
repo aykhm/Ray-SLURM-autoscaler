@@ -217,65 +217,66 @@ class GcpNodeProvider:
         )
 
     def get_spot_rate(self, provider_machine_type: str) -> float:
-        return 4.0
-        machine_type = provider_machine_type
-        region = self.provider_config["region"]
-        zone = self.provider_config["availability_zone"]
+        with open('~/gcp_price.txt') as f:
+            return int(f.read())
+        # machine_type = provider_machine_type
+        # region = self.provider_config["region"]
+        # zone = self.provider_config["availability_zone"]
 
-        credentials, project = google.auth.default()
+        # credentials, project = google.auth.default()
 
-        # Get machine type specs (vCPUs and memory)
-        compute = discovery.build("compute", "v1", credentials=credentials)
-        mt = (
-            compute.machineTypes()
-            .get(project=project, zone=zone, machineType=machine_type)
-            .execute()
-        )
-        vcpus = mt["guestCpus"]
-        memory_gb = mt["memoryMb"] / 1024
+        # # Get machine type specs (vCPUs and memory)
+        # compute = discovery.build("compute", "v1", credentials=credentials)
+        # mt = (
+        #     compute.machineTypes()
+        #     .get(project=project, zone=zone, machineType=machine_type)
+        #     .execute()
+        # )
+        # vcpus = mt["guestCpus"]
+        # memory_gb = mt["memoryMb"] / 1024
 
-        family = machine_type.split("-")[0].upper()  # "e2-small" -> "E2"
+        # family = machine_type.split("-")[0].upper()  # "e2-small" -> "E2"
 
-        billing = discovery.build("cloudbilling", "v1", credentials=credentials)
+        # billing = discovery.build("cloudbilling", "v1", credentials=credentials)
 
-        # Compute Engine service ID is a fixed constant — no need to look it up
-        compute_service = "services/6F81-5844-456A"
+        # # Compute Engine service ID is a fixed constant — no need to look it up
+        # compute_service = "services/6F81-5844-456A"
 
-        cpu_price = 0.0
-        ram_price = 0.0
-        page_token = None
-        while True:
-            kwargs = {"parent": compute_service, "pageSize": 500}
-            if page_token:
-                kwargs["pageToken"] = page_token
-            resp = billing.services().skus().list(**kwargs).execute()
+        # cpu_price = 0.0
+        # ram_price = 0.0
+        # page_token = None
+        # while True:
+        #     kwargs = {"parent": compute_service, "pageSize": 500}
+        #     if page_token:
+        #         kwargs["pageToken"] = page_token
+        #     resp = billing.services().skus().list(**kwargs).execute()
 
-            for sku in resp.get("skus", []):
-                desc = sku["description"]
-                if region not in sku.get("serviceRegions", []):
-                    continue
-                if f"Spot Preemptible {family} Instance" not in desc:
-                    continue
-                tiers = sku["pricingInfo"][0]["pricingExpression"]["tieredRates"]
-                unit_price = tiers[0]["unitPrice"]
-                price = float(unit_price["units"]) + unit_price.get("nanos", 0) / 1e9
-                if "Core" in desc and cpu_price == 0.0:
-                    cpu_price = price
-                elif "Ram" in desc and ram_price == 0.0:
-                    ram_price = price
+        #     for sku in resp.get("skus", []):
+        #         desc = sku["description"]
+        #         if region not in sku.get("serviceRegions", []):
+        #             continue
+        #         if f"Spot Preemptible {family} Instance" not in desc:
+        #             continue
+        #         tiers = sku["pricingInfo"][0]["pricingExpression"]["tieredRates"]
+        #         unit_price = tiers[0]["unitPrice"]
+        #         price = float(unit_price["units"]) + unit_price.get("nanos", 0) / 1e9
+        #         if "Core" in desc and cpu_price == 0.0:
+        #             cpu_price = price
+        #         elif "Ram" in desc and ram_price == 0.0:
+        #             ram_price = price
 
-            page_token = resp.get("nextPageToken")
-            if not page_token or (cpu_price > 0.0 and ram_price > 0.0):
-                break
+        #     page_token = resp.get("nextPageToken")
+        #     if not page_token or (cpu_price > 0.0 and ram_price > 0.0):
+        #         break
 
-        if cpu_price == 0.0 and ram_price == 0.0:
-            raise ValueError(
-                f"No Spot prices found for {machine_type} (family {family}) in {region}"
-            )
+        # if cpu_price == 0.0 and ram_price == 0.0:
+        #     raise ValueError(
+        #         f"No Spot prices found for {machine_type} (family {family}) in {region}"
+        #     )
 
-        price = vcpus * cpu_price + memory_gb * ram_price
-        print(f"gcp: price {price}")
-        return price
+        # price = vcpus * cpu_price + memory_gb * ram_price
+        # print(f"gcp: price {price}")
+        # return price
     
     def provider_machine_type(self, node_config: Dict[str, Any]) -> str:
         return node_config["machineType"]

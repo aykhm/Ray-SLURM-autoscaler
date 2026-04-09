@@ -230,24 +230,26 @@ class AwsNodeProvider:
         )
 
     def get_spot_rate(self, provider_machine_type: str) -> float:
-        return 3.0
-        instance_type = provider_machine_type
+        with open('~/aws_price.txt') as f:
+            return int(f.read())
+        # return 3.0
+        # instance_type = provider_machine_type
 
-        client = boto3.client("ec2", region_name=self.provider_config["region"])
-        response = client.describe_spot_price_history(
-            InstanceTypes=[instance_type],
-            ProductDescriptions=["Linux/UNIX"],
-            AvailabilityZone=self.provider_config["availability_zone"],
-            MaxResults=1,
-        )
-        history = response.get("SpotPriceHistory", [])
-        if not history:
-            print(f"aws error: No spot price found for {instance_type}")
-            return 1e9
+        # client = boto3.client("ec2", region_name=self.provider_config["region"])
+        # response = client.describe_spot_price_history(
+        #     InstanceTypes=[instance_type],
+        #     ProductDescriptions=["Linux/UNIX"],
+        #     AvailabilityZone=self.provider_config["availability_zone"],
+        #     MaxResults=1,
+        # )
+        # history = response.get("SpotPriceHistory", [])
+        # if not history:
+        #     print(f"aws error: No spot price found for {instance_type}")
+        #     return 1e9
 
-        price = float(history[0]["SpotPrice"])
-        print(f"aws: price {price}")
-        return price
+        # price = float(history[0]["SpotPrice"])
+        # print(f"aws: price {price}")
+        # return price
 
     def provider_machine_type(self, node_config: Dict[str, Any]) -> str:
         return node_config["InstanceType"]
